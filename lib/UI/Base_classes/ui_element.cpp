@@ -5,7 +5,6 @@ UIElement::UIElement(TFT &tft, int16_t x1, int16_t x2, int16_t y1, int16_t y2)
     : m_TFT(tft), m_X1(x1), m_X2(x2), m_Y1(y1), m_Y2(y2)
 {
     debug("UIElement created");
-    debug("m_Y2: " + m_Y2 + ", Y2: " + y2);
 }
 
 UIElement::~UIElement()
@@ -47,4 +46,10 @@ bool UIElement::IsOOB() const
         return true;
     }
     return false;
+}
+
+void UIElement::DebugDraw()
+{
+    debug("DebugDraw: X1: " + m_X1 + ", X2: " + m_X2 + ", Y1: " + m_Y1 + ", Y2: " + m_Y2);
+    Draw();
 }

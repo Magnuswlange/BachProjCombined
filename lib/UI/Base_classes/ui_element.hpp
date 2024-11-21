@@ -10,6 +10,7 @@ class UIElement
 public:
     virtual ~UIElement();
     virtual void Draw() = 0;
+    void DebugDraw();
 
     int16_t GetX1() const;
     int16_t GetX2() const;
@@ -17,8 +18,6 @@ public:
     int16_t GetY2() const;
     TFT &GetTFT() const;
     bool IsOOB() const;
-
-protected:
     UIElement(TFT &tft, int16_t x1, int16_t x2, int16_t y1, int16_t y2);
 
 private:

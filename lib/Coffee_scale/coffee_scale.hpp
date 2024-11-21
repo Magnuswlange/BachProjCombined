@@ -1,6 +1,10 @@
 #pragma once
 #include <HX711_ADC.h>
+#include <memory>
 #include "DebugUtils.hpp"
+
+// Declare the function pointer type for shutdown callback
+extern "C" void IRAM_ATTR onTimerExpireISR(void *arg);
 
 class CoffeeScale : public HX711_ADC
 {
@@ -22,25 +26,25 @@ public:
         uint64_t totalBrews = 0;
         float calibrationValue = 0;
 
-        void reset()
+        void Reset()
         {
             *this = {};
         }
     };
 
-    void init(unsigned long stabilizingTime = 2000, bool tareOnStart = true);
-    Mode getMode() const;
-    void setMode(Mode mode);
-    void display();
-    const CoffeeScale::Data &getDataStruct() const;
-    void loadData();
-    void setData(const CoffeeScale::Data &data);
-    void addCurrentBrewToData();
-    void resetData();
-    void saveData();
-    void updateMass();
-    void startOneShotTimer(uint64_t timeMs);
-    void startPeriodicTimer(uint64_t periodMs);
+    void Init(unsigned long stabilizingTime = 2000, bool tareOnStart = true);
+    Mode GetMode() const;
+    void SetMode(Mode mode);
+    const CoffeeScale::Data &GetDataStruct() const;
+    void LoadData();
+    void SetData(const CoffeeScale::Data &data);
+    void AddCurrentBrewToData();
+    void ResetData();
+    void SaveData();
+    void UpdateMass();
+    float GetMass();
+    void StartOneShotTimer(uint64_t timeMs);
+    void StartPeriodicTimer(uint64_t periodMs);
 
 private:
     Mode m_Mode;

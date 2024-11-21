@@ -56,7 +56,7 @@ void TFT::Clear()
     m_TFT.fillScreen(m_BG_COLOR);
 }
 
-Vector2 TFT::getTouchCoords()
+Vector2 TFT::GetTouchCoords()
 {
     Vector2 touchCoords{0, 0};
     SetTouchActive();

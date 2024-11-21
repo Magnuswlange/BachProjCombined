@@ -3,67 +3,58 @@
 #include <EEPROM.h>
 #include <memory>
 #include <HX711_ADC.h>
+#include "config.hpp"
+#include "DebugUtils.hpp"
 #include "TFT_wrapper.hpp"
 #include "coffee_scale.hpp"
-#include "text_component.hpp"
-#include "button_component.hpp"
 #include "button.hpp"
-#include "DebugUtils.hpp"
-
-namespace HX711
-{
-  constexpr uint8_t SCK_PIN = GPIO_NUM_33;
-  constexpr uint8_t DOUT_PIN = GPIO_NUM_32;
-};
-
-namespace TFT_Properties
-{
-  constexpr int16_t WIDTH = 320;
-  constexpr int16_t LENGTH = 240;
-  constexpr uint8_t TEXT_SIZE = 3;
-  constexpr uint16_t TEXT_COLOR = TFT_WHITE;
-  constexpr uint16_t BG_COLOR = TFT_WHITE;
-  constexpr gpio_num_t BACKLIGHT_PIN = GPIO_NUM_2;
-  constexpr gpio_num_t IRQ_PIN = GPIO_NUM_0;
-};
+#include "label.hpp"
+#include "ui_manager.hpp"
 
 volatile bool g_NewDataReady = false;
 volatile bool g_TimeoutTimerExpired = false;
-constexpr gpio_num_t BUZZER_PIN = GPIO_NUM_22;
 
 CoffeeScale g_Scale(HX711::DOUT_PIN, HX711::SCK_PIN);
 TFT g_TFT(TFT_Properties::LENGTH, TFT_Properties::WIDTH, TFT_Properties::TEXT_COLOR, TFT_Properties::BG_COLOR, TFT_Properties::TEXT_SIZE);
+UIManager g_UIManager(g_TFT, 10);
 
+constexpr unsigned long g_TimeoutThresholdMs = 60 * 1000;
+
+// mark by instruction RAM attribute
+extern "C" void IRAM_ATTR onTimerExpireISR(void *arg)
+{
+  g_TimeoutTimerExpired = true;
+}
 void onDataReadyISR();
-void handleButtonPress(std::vector<std::unique_ptr<Button>> &buttons);
+void handleButtonPress();
 void handleScaleUpdate();
+void shutdown();
 
 /*
 TODO:
-set timeOut/oneShotTimer callback function to the ISR in main using extern "C".
-when button pressed, set last interaction time
+set period timer callback function to the ISR in main using extern "C" to keep track of current brewing time.
 remember to profile application
 ?Expand button hit box to make it more forgiving/less annoying (already covered by padding?)
 ?Run buttons by interrupts vs polling
 line: tft.drawWideLine(0, 0, 320 / 2, 240 / 2, 2, TFT_DARKGREY, TFT_BROWN);
+?divide Data struct to statistics and settings
 */
 
 void setup()
 {
   Serial.begin(115200);
-  debug("Setup started");
+  debug("\nSetup started");
 
   pinMode(TFT_Properties::BACKLIGHT_PIN, OUTPUT);
   pinMode(TFT_Properties::IRQ_PIN, INPUT_PULLUP);
-  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(Misc::BUZZER_PIN, OUTPUT);
   digitalWrite(TFT_Properties::BACKLIGHT_PIN, HIGH);
-
   esp_sleep_enable_ext0_wakeup(TFT_Properties::IRQ_PIN, LOW);
-  attachInterrupt(digitalPinToInterrupt(HX711::DOUT_PIN), onDataReadyISR, FALLING);
 
-  EEPROM.begin(512); // CoffeeScale::Data + other vars
+  EEPROM.begin(512); // CoffeeScale::Data + other EEPROM vars
   g_TFT.Init();
-  g_Scale.init();
+  g_Scale.Init(); // init pins before attaching interrupt to avoid time out
+  attachInterrupt(digitalPinToInterrupt(HX711::DOUT_PIN), onDataReadyISR, FALLING);
 
   // write test data
   // constexpr CoffeeScale::Data testData{1, 2, 466.97};
@@ -72,24 +63,25 @@ void setup()
 
   RTC_DATA_ATTR static uint8_t bootCount = 0;
   debug("Boot count: " + bootCount++);
-  debug("Setup done");
+  debug("Setup done\n");
 }
 
 void loop()
 {
-  constexpr unsigned long timeoutThreshold = 210 * 1000000; // 210 s
-
   std::vector<std::unique_ptr<Button>> buttons;
-  buttons.reserve(3);
-  buttons.emplace_back(std::make_unique<Button>(g_TFT, "test"));
-  buttons.emplace_back(std::make_unique<Button>(g_TFT, "test1"));
+  g_Scale.StartOneShotTimer(g_TimeoutThresholdMs);
+
+  g_UIManager.AddButton("Manual mode");
+  g_UIManager.AddButton("Auto mode");
+  g_UIManager.AddButton("Statistics");
 
   while (!g_TimeoutTimerExpired)
   {
-    handleButtonPress(buttons);
+    handleButtonPress();
     handleScaleUpdate();
   }
-  debug("Timeout timer expired!");
+
+  shutdown();
 }
 
 inline void onDataReadyISR()
@@ -100,54 +92,43 @@ inline void onDataReadyISR()
   }
 }
 
-// mark by instruction RAM attribute
-inline void IRAM_ATTR onTimerExpireISR(void *arg)
-{
-  g_TimeoutTimerExpired = true;
-}
-
-void handleButtonPress(std::vector<std::unique_ptr<Button>> &buttons)
+void handleButtonPress()
 {
   // handle button press
-  Vector2 touchCoords = g_TFT.getTouchCoords();
+  Vector2 touchCoords = g_TFT.GetTouchCoords();
 
-  if (touchCoords.x != 0 || touchCoords.y != 0)
+  if (touchCoords.x == 0 && touchCoords.y == 0)
   {
-    for (auto it = buttons.begin(); it != buttons.end(); it++)
+    return;
+  }
+
+  g_Scale.StartOneShotTimer(g_TimeoutThresholdMs);
+  const std::vector<std::unique_ptr<StaticUIElement>> &_vec = g_UIManager.GetStaticElements();
+
+  for (auto it = _vec.begin(); it != _vec.end(); it++)
+  {
+    Button *button = dynamic_cast<Button *>(it->get()); // cast UIElement to button obj
+
+    // if not a Button obj
+    if (button == nullptr)
     {
-      if (!(*it)->IsClicked(touchCoords.x, touchCoords.y))
-      {
-        continue;
-      }
-
-      // debug("Button clicked!");
-      // buttons.erase(it);
-      // analogWrite(BUZZER_PIN, 255 / 4);
-      // digitalWrite(TFT_Properties::BACKLIGHT_PIN, 0);
-      // // update display
-      // // g_TFT.Clear(); // clear display
-      // // // re-draw all available buttons
-      // // for (auto const &button : buttons)
-      // // {
-      // //   button->Draw();
-      // // }
-      // delay(50);
-      // analogWrite(BUZZER_PIN, 0);
-
-      // // save to eeprom, clean up, etc.
-      // debug("Entering deep sleep");
-      // g_Scale.saveData();
-      // delay(2000); // artificial delay to make the device (backlight) seem turned off, but wait for a little while to prevent accidental instantaneous power on
-      // esp_deep_sleep_start();
-      // break; // can only press 1 button/point at a time, no need to check the rest
-
-      debug("Button clicked");
-      g_Scale.setMode(CoffeeScale::Mode::NORMAL);
-      // analogWrite(BUZZER_PIN, 255 / 3);
-      // delay(50);
-      // analogWrite(BUZZER_PIN, 0);
-      break;
+      continue;
     }
+
+    // if not pressed
+    if (!button->IsClicked(touchCoords.x, touchCoords.y))
+    {
+      continue;
+    }
+
+    debug("Button clicked");
+    analogWrite(Misc::BUZZER_PIN, 255 / 4);
+    delay(50);
+    analogWrite(Misc::BUZZER_PIN, 0);
+
+    debug(g_UIManager.GetDynamicElements().size());
+    g_Scale.SetMode(CoffeeScale::Mode::NORMAL);
+    break; // can only press 1 button/point at a time, no need to check the rest
   }
 }
 
@@ -159,9 +140,52 @@ void handleScaleUpdate()
     return;
   }
 
-  g_Scale.updateMass();
-  // display new data in according mode
-  // (for auto mode) store last mass and compare current mass to last mass, then if greater than some pre - defined threshold, detect as brew started, start timer break;
-  g_Scale.display();
+  switch (g_Scale.GetMode())
+  {
+  case CoffeeScale::Mode::MENU:
+  {
+    debug("Welcome to the main menu");
+    break;
+  }
+  case CoffeeScale::Mode::NORMAL:
+  {
+    g_TFT.Clear();
+    g_UIManager.Clear();
+    std::shared_ptr<Label> massLabel = std::make_shared<Label>(g_TFT, "Mass: " + (String)g_Scale.GetMass(), 0, 0, TFT_BLACK);
+    g_UIManager.AddLabel(massLabel);
+
+    while (1)
+    {
+      g_Scale.UpdateMass();
+      massLabel->SetLabel("Mass: " + (String)g_Scale.GetMass());
+      g_UIManager.Update();
+      delay(10);
+    }
+    break;
+  }
+  case CoffeeScale::Mode::AUTO:
+  {
+    debug("Mass (g): " + g_Scale.GetMass());
+    // const int elapsedTimeSeconds = getTimeSinceInteraction() / 1000000;
+    // debug("Time (m:s): " + elapsedTimeSeconds / 60 + ":" + elapsedTimeSeconds % 60); // s to m and clamp seconds to [0;59]
+    break;
+  }
+  case CoffeeScale::Mode::STATS:
+  {
+    CoffeeScale::Data scaleData = g_Scale.GetDataStruct();
+    debug("Total volume: " + scaleData.totalVolume);
+    debug("Total brews: " + scaleData.totalBrews);
+    debug("Calibration value: " + scaleData.calibrationValue);
+    break;
+  }
+  };
+
   g_NewDataReady = false;
+}
+
+void shutdown()
+{
+  debug("Shutting down");
+  g_Scale.SaveData();
+  esp_deep_sleep_start();
 }

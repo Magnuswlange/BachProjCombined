@@ -14,7 +14,7 @@ public:
     TFT(int16_t width, int16_t height, int16_t textColor, int16_t bgColor, uint8_t textSize);
     void Init(bool calibrate = false);
     void Clear();
-    Vector2 getTouchCoords();
+    Vector2 GetTouchCoords();
     void SetTouchActive();
     void SetTFTActive();
     TFT_eSPI &GetTFT();
@@ -33,5 +33,5 @@ private:
     int16_t m_BG_COLOR;
     const int8_t m_TEXT_PADDING = 2;
     const int8_t m_GAP = 2;
-    uint16_t m_CalData[5];
+    uint16_t m_CalData[5]; // ?convert to C++ style array
 };

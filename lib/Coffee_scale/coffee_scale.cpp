@@ -25,109 +25,89 @@ CoffeeScale::~CoffeeScale()
     }
 }
 
-void CoffeeScale::init(unsigned long stabilizingTime, bool tareOnStart)
+void CoffeeScale::Init(unsigned long stabilizingTime, bool tareOnStart)
 {
-    begin();
+    begin(); // init pins and set gain
     start(stabilizingTime, tareOnStart);
 
     if (getTareTimeoutFlag())
     {
-        debug("Error: scale timed out");
-        return;
+        debug("Error: taring operation timed out");
+        // return;
     }
 
-    // EEPROM.begin(sizeof(CoffeeScale::Data));
-    loadData();
+    if (getSignalTimeoutFlag())
+    {
+        debug("Error: signal timed out");
+        // return;
+    }
+
+    LoadData(); // load Data struct from EEPROM
+    debug("Calibration value: " + m_Data.calibrationValue);
     setCalFactor(m_Data.calibrationValue);
-    esp_timer_create_args_t oneShotTimerArgs{.callback = nullptr, // func to cb on timer end
+
+    esp_timer_create_args_t oneShotTimerArgs{.callback = onTimerExpireISR, // func to cb on timer end
                                              .arg = nullptr,
                                              .dispatch_method = ESP_TIMER_TASK,
                                              .name = "oneShotTimer"};
     esp_timer_create(&oneShotTimerArgs, &m_OneShotTimer);
+
     esp_timer_create(nullptr, &m_PeriodTimer);
 }
 
-void test(void *arg);
-
-void CoffeeScale::setMode(Mode mode)
+void CoffeeScale::SetMode(Mode mode)
 {
     m_Mode = mode;
 }
 
-CoffeeScale::Mode CoffeeScale::getMode() const
+CoffeeScale::Mode CoffeeScale::GetMode() const
 {
     return m_Mode;
 }
 
-void CoffeeScale::display()
-{
-    switch (m_Mode)
-    {
-    case Mode::MENU:
-    {
-        debug("Welcome to the main menu");
-        break;
-    }
-    case Mode::NORMAL:
-    {
-        debug("Mass (g): " + m_Mass);
-        break;
-    }
-    case Mode::AUTO:
-    {
-        debug("Mass (g): " + m_Mass);
-        // const int elapsedTimeSeconds = getTimeSinceInteraction() / 1000000;
-        // debug("Time (m:s): " + elapsedTimeSeconds / 60 + ":" + elapsedTimeSeconds % 60); // s to m and clamp seconds to [0;59]
-        break;
-    }
-    case Mode::STATS:
-    {
-        debug("Total volume: " + m_Data.totalVolume);
-        debug("Total brews: " + m_Data.totalBrews);
-        debug("Calibration value: " + m_Data.calibrationValue);
-        break;
-    }
-    };
-}
-
-const CoffeeScale::Data &CoffeeScale::getDataStruct() const
+const CoffeeScale::Data &CoffeeScale::GetDataStruct() const
 {
     return m_Data;
 }
 
-void CoffeeScale::loadData()
+void CoffeeScale::LoadData()
 {
     EEPROM.get(m_EepromStartAddress, m_Data);
 }
 
-void CoffeeScale::setData(const CoffeeScale::Data &data)
+void CoffeeScale::SetData(const CoffeeScale::Data &data)
 {
     m_Data = data;
 }
 
-void CoffeeScale::addCurrentBrewToData()
+void CoffeeScale::AddCurrentBrewToData()
 {
     m_Data.totalVolume += m_Mass / 1000; // g to kg, aka volume L
     m_Data.totalBrews++;
 }
 
-void CoffeeScale::resetData()
+void CoffeeScale::ResetData()
 {
-    m_Data.reset();
+    m_Data.Reset();
 }
 
-void CoffeeScale::saveData()
+void CoffeeScale::SaveData()
 {
     EEPROM.put(m_EepromStartAddress, m_Data);
     EEPROM.commit();
 }
 
-void CoffeeScale::updateMass()
+void CoffeeScale::UpdateMass()
 {
     m_Mass = getData();
 }
 
-void CoffeeScale::startOneShotTimer(uint64_t timeMs)
+float CoffeeScale::GetMass()
+{
+    return m_Mass;
+}
+
+void CoffeeScale::StartOneShotTimer(uint64_t timeMs)
 {
     if (esp_timer_is_active(m_OneShotTimer))
     {
@@ -136,7 +116,7 @@ void CoffeeScale::startOneShotTimer(uint64_t timeMs)
     esp_timer_start_once(m_OneShotTimer, timeMs * 1000);
 }
 
-void CoffeeScale::startPeriodicTimer(uint64_t periodMs)
+void CoffeeScale::StartPeriodicTimer(uint64_t periodMs)
 {
     if (esp_timer_is_active(m_PeriodTimer))
     {
