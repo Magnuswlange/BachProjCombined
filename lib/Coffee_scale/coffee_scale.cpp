@@ -1,8 +1,11 @@
 #include <EEPROM.h>
 #include "coffee_scale.hpp"
 
-CoffeeScale::CoffeeScale(uint8_t dOutPin, uint8_t sckPin)
-    : HX711_ADC(dOutPin, sckPin) {}
+CoffeeScale::CoffeeScale(FiniteStateMachine &stateManager, uint8_t dOutPin, uint8_t sckPin)
+    : HX711_ADC(dOutPin, sckPin),
+      m_StateManager(stateManager)
+{
+}
 
 CoffeeScale::~CoffeeScale()
 {
@@ -53,16 +56,6 @@ void CoffeeScale::Init(unsigned long stabilizingTime, bool tareOnStart)
     esp_timer_create(&oneShotTimerArgs, &m_OneShotTimer);
 
     esp_timer_create(nullptr, &m_PeriodTimer);
-}
-
-void CoffeeScale::SetMode(Mode mode)
-{
-    m_Mode = mode;
-}
-
-CoffeeScale::Mode CoffeeScale::GetMode() const
-{
-    return m_Mode;
 }
 
 const CoffeeScale::Data &CoffeeScale::GetDataStruct() const

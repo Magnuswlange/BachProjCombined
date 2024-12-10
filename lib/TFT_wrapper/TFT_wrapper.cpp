@@ -63,7 +63,7 @@ Vector2 TFT::GetTouchCoords()
 
     if (m_TFT.getTouch(&touchCoords.x, &touchCoords.y))
     {
-        debug("Touch detected: (" + touchCoords.x + ", " + touchCoords.y);
+        debug("Touch detected: (" + touchCoords.x + ", " + touchCoords.y + ")");
         SetTFTActive();
         m_TFT.fillCircle(touchCoords.x, touchCoords.y, 2, TFT_RED);
     }

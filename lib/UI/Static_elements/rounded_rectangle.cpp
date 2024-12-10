@@ -5,7 +5,11 @@ RoundedRectangle::RoundedRectangle(TFT &tft, int16_t x, int16_t y, int16_t textW
       m_Color(color)
 {
     debug("Rounded rectangle created");
-    DebugDraw();
+
+    if (!IsOOB())
+    {
+        DebugDraw();
+    }
 }
 
 RoundedRectangle::~RoundedRectangle()

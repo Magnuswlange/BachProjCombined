@@ -10,33 +10,39 @@
 #include "button.hpp"
 #include "label.hpp"
 #include "ui_manager.hpp"
+#include "finite_state_machine.hpp"
+#include "BuzzerUtil.hpp"
 
-volatile bool g_NewDataReady = false;
-volatile bool g_TimeoutTimerExpired = false;
-
-CoffeeScale g_Scale(HX711::DOUT_PIN, HX711::SCK_PIN);
-TFT g_TFT(TFT_Properties::LENGTH, TFT_Properties::WIDTH, TFT_Properties::TEXT_COLOR, TFT_Properties::BG_COLOR, TFT_Properties::TEXT_SIZE);
-UIManager g_UIManager(g_TFT, 10);
-
-constexpr unsigned long g_TimeoutThresholdMs = 60 * 1000;
-
-// mark by instruction RAM attribute
-extern "C" void IRAM_ATTR onTimerExpireISR(void *arg)
-{
-  g_TimeoutTimerExpired = true;
-}
+void OnStateEnter(State newState);
+void OnStateExit(State oldState);
+void OnButtonPress(State newState);
 void onDataReadyISR();
 void handleButtonPress();
 void handleScaleUpdate();
 void shutdown();
+
+volatile bool g_NewDataReady = false;
+volatile bool g_TimeoutTimerExpired = false;
+bool g_UIUpdateOnlyOnce = false;
+RTC_DATA_ATTR static uint8_t g_BootCount = 0;
+
+FiniteStateMachine g_StateMachine(OnStateEnter, OnStateExit);
+TFT g_TFT(TFT_Properties::LENGTH, TFT_Properties::WIDTH, TFT_Properties::TEXT_COLOR, TFT_Properties::BG_COLOR, TFT_Properties::TEXT_SIZE);
+UIManager g_UIManager(g_TFT, 10, g_StateMachine);
+CoffeeScale g_Scale(g_StateMachine, HX711::DOUT_PIN, HX711::SCK_PIN);
+
+// mark by instruction RAM attribute. extern C to avoid cpp name mangling so compiler/linker can find the function across translation units
+extern "C" void IRAM_ATTR onTimerExpireISR(void *arg)
+{
+  g_TimeoutTimerExpired = true;
+}
 
 /*
 TODO:
 set period timer callback function to the ISR in main using extern "C" to keep track of current brewing time.
 remember to profile application
 ?Expand button hit box to make it more forgiving/less annoying (already covered by padding?)
-?Run buttons by interrupts vs polling
-line: tft.drawWideLine(0, 0, 320 / 2, 240 / 2, 2, TFT_DARKGREY, TFT_BROWN);
+?Run buttons by interrupts vs polling vs callback
 ?divide Data struct to statistics and settings
 */
 
@@ -44,7 +50,6 @@ void setup()
 {
   Serial.begin(115200);
   debug("\nSetup started");
-
   pinMode(TFT_Properties::BACKLIGHT_PIN, OUTPUT);
   pinMode(TFT_Properties::IRQ_PIN, INPUT_PULLUP);
   pinMode(Misc::BUZZER_PIN, OUTPUT);
@@ -61,22 +66,21 @@ void setup()
   // g_Scale.setData(testData);
   // g_Scale.saveData();
 
-  RTC_DATA_ATTR static uint8_t bootCount = 0;
-  debug("Boot count: " + bootCount++);
+  g_StateMachine.SetState(State::STATS);
+  g_Scale.StartOneShotTimer(Misc::TIMEOUT_THRESHOLD_MS);
+  debug("Boot count: " + g_BootCount++);
   debug("Setup done\n");
 }
 
 void loop()
 {
-  std::vector<std::unique_ptr<Button>> buttons;
-  g_Scale.StartOneShotTimer(g_TimeoutThresholdMs);
-
-  g_UIManager.AddButton("Manual mode");
-  g_UIManager.AddButton("Auto mode");
-  g_UIManager.AddButton("Statistics");
-
   while (!g_TimeoutTimerExpired)
   {
+    if (!g_UIUpdateOnlyOnce)
+    {
+      g_UIManager.Update();
+    }
+
     handleButtonPress();
     handleScaleUpdate();
   }
@@ -94,7 +98,6 @@ inline void onDataReadyISR()
 
 void handleButtonPress()
 {
-  // handle button press
   Vector2 touchCoords = g_TFT.GetTouchCoords();
 
   if (touchCoords.x == 0 && touchCoords.y == 0)
@@ -102,84 +105,31 @@ void handleButtonPress()
     return;
   }
 
-  g_Scale.StartOneShotTimer(g_TimeoutThresholdMs);
-  const std::vector<std::unique_ptr<StaticUIElement>> &_vec = g_UIManager.GetStaticElements();
+  BuzzerUtil::Play(1);
+  g_Scale.StartOneShotTimer(Misc::TIMEOUT_THRESHOLD_MS);
+  const std::vector<std::unique_ptr<Button>> &buttons = g_UIManager.GetButtons();
 
-  for (auto it = _vec.begin(); it != _vec.end(); it++)
+  for (const auto &button : buttons)
   {
-    Button *button = dynamic_cast<Button *>(it->get()); // cast UIElement to button obj
-
-    // if not a Button obj
-    if (button == nullptr)
+    if (button == nullptr || !button->IsClicked(touchCoords.x, touchCoords.y))
     {
       continue;
     }
 
-    // if not pressed
-    if (!button->IsClicked(touchCoords.x, touchCoords.y))
-    {
-      continue;
-    }
-
-    debug("Button clicked");
-    analogWrite(Misc::BUZZER_PIN, 255 / 4);
-    delay(50);
-    analogWrite(Misc::BUZZER_PIN, 0);
-
-    debug(g_UIManager.GetDynamicElements().size());
-    g_Scale.SetMode(CoffeeScale::Mode::NORMAL);
+    button->OnPress();
     break; // can only press 1 button/point at a time, no need to check the rest
   }
 }
 
 void handleScaleUpdate()
 {
-  // handle scale actions
   if (!g_NewDataReady)
   {
     return;
   }
 
-  switch (g_Scale.GetMode())
-  {
-  case CoffeeScale::Mode::MENU:
-  {
-    debug("Welcome to the main menu");
-    break;
-  }
-  case CoffeeScale::Mode::NORMAL:
-  {
-    g_TFT.Clear();
-    g_UIManager.Clear();
-    std::shared_ptr<Label> massLabel = std::make_shared<Label>(g_TFT, "Mass: " + (String)g_Scale.GetMass(), 0, 0, TFT_BLACK);
-    g_UIManager.AddLabel(massLabel);
-
-    while (1)
-    {
-      g_Scale.UpdateMass();
-      massLabel->SetLabel("Mass: " + (String)g_Scale.GetMass());
-      g_UIManager.Update();
-      delay(10);
-    }
-    break;
-  }
-  case CoffeeScale::Mode::AUTO:
-  {
-    debug("Mass (g): " + g_Scale.GetMass());
-    // const int elapsedTimeSeconds = getTimeSinceInteraction() / 1000000;
-    // debug("Time (m:s): " + elapsedTimeSeconds / 60 + ":" + elapsedTimeSeconds % 60); // s to m and clamp seconds to [0;59]
-    break;
-  }
-  case CoffeeScale::Mode::STATS:
-  {
-    CoffeeScale::Data scaleData = g_Scale.GetDataStruct();
-    debug("Total volume: " + scaleData.totalVolume);
-    debug("Total brews: " + scaleData.totalBrews);
-    debug("Calibration value: " + scaleData.calibrationValue);
-    break;
-  }
-  };
-
+  g_Scale.UpdateMass();
+  // SetLabel where String starts with mass and set it to the new g_Scale.GetMass()
   g_NewDataReady = false;
 }
 
@@ -188,4 +138,77 @@ void shutdown()
   debug("Shutting down");
   g_Scale.SaveData();
   esp_deep_sleep_start();
+}
+
+void OnButtonPress(State newState)
+{
+  debug("OnButtonPress called!");
+  g_StateMachine.SetState(newState);
+}
+
+void OnStateExit(State oldState)
+{
+  debug("OnStateExit called!");
+
+  g_TFT.Clear();
+  g_UIManager.Clear();
+  g_UIUpdateOnlyOnce = false;
+}
+
+void OnStateEnter(State newState)
+{
+  debug("OnStateEnter called!");
+
+  if (&g_UIManager == nullptr)
+  {
+    debug("UIManager is nullptr");
+    return;
+  }
+
+  switch (newState)
+  {
+  case State::MAIN_MENU:
+  {
+    debug("Welcome to the main menu");
+
+    // g_UIManager.AddButton("Manual mode", State::NORMAL, OnButtonPress);
+    // g_UIManager.AddButton("Auto mode", State::AUTO, OnButtonPress);
+    // g_UIManager.AddButton("Statistics", State::STATS, OnButtonPress);
+    // debug("button created successfully");
+    g_UIManager.Update();
+    g_UIUpdateOnlyOnce = true;
+    break;
+  }
+  case State::NORMAL:
+  {
+    g_UIManager.AddLabel("Mass: X.XX g", 0, 0, TFT_BLACK); // Can't use SetLabel as the mass would change (string comp)
+    g_UIUpdateOnlyOnce = false;
+    break;
+  }
+  case State::AUTO:
+  {
+    debug("Mass (g): " + g_Scale.GetMass());
+
+    g_UIUpdateOnlyOnce = false;
+    // const int elapsedTimeSeconds = getTimeSinceInteraction() / 1000000;
+    // debug("Time (m:s): " + elapsedTimeSeconds / 60 + ":" + elapsedTimeSeconds % 60); // s to m and clamp seconds to [0;59]
+    break;
+  }
+  case State::STATS:
+  {
+    CoffeeScale::Data scaleData = g_Scale.GetDataStruct();
+
+    debug("Total volume: " + scaleData.totalVolume);
+    debug("Total brews: " + scaleData.totalBrews);
+    debug("Boot count: " + g_BootCount);
+    debug("Calibration value: " + scaleData.calibrationValue);
+
+    g_UIManager.AddLabel("Volume: " + (String)scaleData.totalVolume, 0, (g_TFT.GetTFT().fontHeight() + 4) * 0, TFT_BLACK);
+    g_UIManager.AddLabel("Brews: " + (String)scaleData.totalBrews, 0, (g_TFT.GetTFT().fontHeight() + 4) * 1, TFT_BLACK);
+    g_UIManager.AddLabel("Boot count: " + (String)g_BootCount, 0, (g_TFT.GetTFT().fontHeight() + 4) * 2, TFT_BLACK);
+    g_UIManager.AddLabel("Calibration value: " + (String)scaleData.calibrationValue, 0, (g_TFT.GetTFT().fontHeight() + 4) * 3, TFT_BLACK);
+    g_UIUpdateOnlyOnce = true;
+    break;
+  }
+  }
 }

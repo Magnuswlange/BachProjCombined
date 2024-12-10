@@ -7,7 +7,11 @@ Label::Label(TFT &tft, const String &label, int16_t x, int16_t y, int16_t labelC
 {
     debug("Label component created");
     debug("Label padding as int: " + static_cast<int>(m_LABEL_PADDING));
-    DebugDraw();
+
+    if (!IsOOB())
+    {
+        DebugDraw();
+    }
 }
 
 Label::~Label()
@@ -31,7 +35,7 @@ String Label::GetLabel()
 void Label::Update()
 {
     TFT_eSPI &_TFT = GetTFT().GetTFT();
-    _TFT.fillRoundRect(GetX1(), GetY1(), TFT_Properties::WIDTH, GetY2() - GetY1(), 3, TFT_WHITE); // clear whole line  by drawing BG_COLOR rect above text. white for now
+    _TFT.fillRoundRect(GetX1(), GetY1(), TFT_Properties::WIDTH, GetY2() - GetY1(), 3, TFT_WHITE); // clear whole line by drawing BG_COLOR rect above text. white for now
     DebugDraw();
 }
 
