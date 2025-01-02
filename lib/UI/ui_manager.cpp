@@ -33,6 +33,7 @@ void UIManager::SetLabelText(const String &oldText, const String &newText)
 
 void UIManager::AddButton(const String &text, State state, std::function<void(State)> callbackFunc, uint16_t textColor, uint16_t rectColor)
 {
+    debug("Button is being created");
     std::unique_ptr<Button> btn = std::make_unique<Button>(m_TFT, text, state, callbackFunc, textColor, rectColor);
     if (btn->IsOOB())
     {
@@ -40,6 +41,7 @@ void UIManager::AddButton(const String &text, State state, std::function<void(St
     }
 
     m_Buttons.push_back(std::move(btn)); // transfer ownership
+    debug("Button added to vec");
 }
 
 void UIManager::Clear()

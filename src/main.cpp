@@ -16,10 +16,10 @@
 void OnStateEnter(State newState);
 void OnStateExit(State oldState);
 void OnButtonPress(State newState);
-void onDataReadyISR();
-void handleButtonPress();
-void handleScaleUpdate();
-void shutdown();
+void OnDataReadyISR();
+void HandleButtonPress();
+void HandleScaleUpdate();
+void Shutdown();
 
 volatile bool g_NewDataReady = false;
 volatile bool g_TimeoutTimerExpired = false;
@@ -59,7 +59,7 @@ void setup()
   EEPROM.begin(512); // CoffeeScale::Data + other EEPROM vars
   g_TFT.Init();
   g_Scale.Init(); // init pins before attaching interrupt to avoid time out
-  attachInterrupt(digitalPinToInterrupt(HX711::DOUT_PIN), onDataReadyISR, FALLING);
+  attachInterrupt(digitalPinToInterrupt(HX711::DOUT_PIN), OnDataReadyISR, FALLING);
 
   // write test data
   // constexpr CoffeeScale::Data testData{1, 2, 466.97};
@@ -81,14 +81,16 @@ void loop()
       g_UIManager.Update();
     }
 
-    handleButtonPress();
-    handleScaleUpdate();
+    HandleButtonPress();
+    HandleScaleUpdate();
+
+    delay(100);
   }
 
-  shutdown();
+  Shutdown();
 }
 
-inline void onDataReadyISR()
+inline void OnDataReadyISR()
 {
   if (g_Scale.update())
   {
@@ -96,7 +98,7 @@ inline void onDataReadyISR()
   }
 }
 
-void handleButtonPress()
+void HandleButtonPress()
 {
   Vector2 touchCoords = g_TFT.GetTouchCoords();
 
@@ -121,7 +123,7 @@ void handleButtonPress()
   }
 }
 
-void handleScaleUpdate()
+void HandleScaleUpdate()
 {
   if (!g_NewDataReady)
   {
@@ -133,7 +135,7 @@ void handleScaleUpdate()
   g_NewDataReady = false;
 }
 
-void shutdown()
+void Shutdown()
 {
   debug("Shutting down");
   g_Scale.SaveData();
@@ -157,6 +159,8 @@ void OnStateExit(State oldState)
 
 void OnStateEnter(State newState)
 {
+  State pendingState = newState;
+
   debug("OnStateEnter called!");
 
   if (&g_UIManager == nullptr)
@@ -171,7 +175,7 @@ void OnStateEnter(State newState)
   {
     debug("Welcome to the main menu");
 
-    // g_UIManager.AddButton("Manual mode", State::NORMAL, OnButtonPress);
+    g_UIManager.AddButton("Manual mode", State::NORMAL, OnButtonPress);
     // g_UIManager.AddButton("Auto mode", State::AUTO, OnButtonPress);
     // g_UIManager.AddButton("Statistics", State::STATS, OnButtonPress);
     // debug("button created successfully");
@@ -211,4 +215,6 @@ void OnStateEnter(State newState)
     break;
   }
   }
+
+  delay(100);
 }
