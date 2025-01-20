@@ -17,13 +17,14 @@ void OnStateEnter(State newState);
 void OnStateExit(State oldState);
 void OnButtonPress(State newState);
 void OnDataReadyISR();
-void HandleButtonPress();
+bool HandleButtonPress();
 void HandleScaleUpdate();
 void Shutdown();
 
 volatile bool g_NewDataReady = false;
 volatile bool g_TimeoutTimerExpired = false;
-bool g_UIUpdateOnlyOnce = false;
+volatile int g_TimerDurationS = 0;
+uint8_t g_AutoStage = 0;
 RTC_DATA_ATTR static uint8_t g_BootCount = 0;
 
 FiniteStateMachine g_StateMachine(OnStateEnter, OnStateExit);
@@ -31,10 +32,15 @@ TFT g_TFT(TFT_Properties::LENGTH, TFT_Properties::WIDTH, TFT_Properties::TEXT_CO
 UIManager g_UIManager(g_TFT, 10, g_StateMachine);
 CoffeeScale g_Scale(g_StateMachine, HX711::DOUT_PIN, HX711::SCK_PIN);
 
-// mark by instruction RAM attribute. extern C to avoid cpp name mangling so compiler/linker can find the function across translation units
-extern "C" void IRAM_ATTR onTimerExpireISR(void *arg)
+// mark by AM attribute. extern C to avoid cpp name mangling so compiler/linker can find the function across translation units
+extern "C" void IRAM_ATTR OnOneShotExpireISR(void *arg)
 {
   g_TimeoutTimerExpired = true;
+}
+
+extern "C" void IRAM_ATTR OnPeriodISR(void *arg)
+{
+  g_TimerDurationS++;
 }
 
 /*
@@ -62,11 +68,11 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(HX711::DOUT_PIN), OnDataReadyISR, FALLING);
 
   // write test data
-  // constexpr CoffeeScale::Data testData{1, 2, 466.97};
-  // g_Scale.setData(testData);
-  // g_Scale.saveData();
+  // constexpr CoffeeScale::Data testData{5, 10, -995.98};
+  // g_Scale.SetData(testData);
+  // g_Scale.SaveData();
 
-  g_StateMachine.SetState(State::STATS);
+  g_StateMachine.SetState(State::MAIN_MENU);
   g_Scale.StartOneShotTimer(Misc::TIMEOUT_THRESHOLD_MS);
   debug("Boot count: " + g_BootCount++);
   debug("Setup done\n");
@@ -76,15 +82,115 @@ void loop()
 {
   while (!g_TimeoutTimerExpired)
   {
-    if (!g_UIUpdateOnlyOnce)
+    if (HandleButtonPress())
     {
-      g_UIManager.Update();
+      delay(100);
+      continue;
     }
 
-    HandleButtonPress();
     HandleScaleUpdate();
 
-    delay(100);
+    switch (g_StateMachine.GetState())
+    {
+    case State::IDLE:
+    {
+      break;
+    }
+    case State::NORMAL:
+    {
+      static float lastMass = 0;
+      debug("Mass (g): " + (String)g_Scale.GetMass());
+
+      if (g_Scale.GetMass() < lastMass - 0.1 || g_Scale.GetMass() > lastMass + 0.1)
+      {
+        debug("Significant mass change detected, updating display");
+        g_Scale.StartOneShotTimer(Misc::TIMEOUT_THRESHOLD_MS);
+        lastMass = g_Scale.GetMass();
+        g_UIManager.SetLabelText(10, "Mass: " + (String)g_Scale.GetMass() + " g");
+      }
+
+      break;
+    }
+    case State::AUTO:
+    {
+      static float lastMass = 0;
+      static float lastFlowRate = 0;
+      static int lastDurationS = 0;
+
+      float currMass = g_Scale.GetMass();
+      debug("Mass (g): " + (String)currMass);
+
+      float flowRate = currMass / g_TimerDurationS;
+
+      if (flowRate != lastFlowRate)
+      {
+        lastFlowRate = flowRate;
+        g_UIManager.SetLabelText(13, "Rate: " + (String)flowRate + " g/s");
+      }
+
+      if (currMass < lastMass - 0.1 || currMass > lastMass + 0.1)
+      {
+        debug("Significant mass change detected, updating display");
+        g_Scale.StartOneShotTimer(Misc::TIMEOUT_THRESHOLD_MS);
+        lastMass = currMass;
+        g_UIManager.SetLabelText(10, "Mass: " + (String)currMass + " g");
+
+        if (!g_Scale.IsPeriodTimerRunning())
+        {
+          g_Scale.StartPeriodicTimer(1000);
+        }
+      }
+
+      if (g_TimerDurationS != lastDurationS)
+      {
+        g_UIManager.SetLabelText(11, "Time: " + String((int)floor(g_TimerDurationS / 60)) + "m" + String(g_TimerDurationS % 60) + ("s")); // s to m and clamp seconds to [0;59]
+        lastDurationS = g_TimerDurationS;
+      }
+
+      if (g_TimerDurationS > 0 && g_TimerDurationS < 15 && g_AutoStage == 0)
+      {
+        g_AutoStage++;
+        g_UIManager.SetLabelText(12, "0-15s, pour \nuntil 60g");
+        BuzzerUtil::Play(2);
+      }
+      else if (g_TimerDurationS >= 15 && g_TimerDurationS < 45 && g_AutoStage == 1)
+      {
+        g_AutoStage++;
+        g_UIManager.SetLabelText(12, "15-45s, blooming \nwait");
+        BuzzerUtil::Play(2);
+      }
+      else if (g_TimerDurationS >= 45 && g_TimerDurationS < 75 && g_AutoStage == 2)
+      {
+        g_AutoStage++;
+        g_UIManager.SetLabelText(12, "45s-1m15s, pour \nuntil 300g");
+        BuzzerUtil::Play(2);
+      }
+      else if (g_TimerDurationS >= 75 && g_TimerDurationS < 105 && g_AutoStage == 3)
+      {
+        g_AutoStage++;
+        g_UIManager.SetLabelText(12, "1m15s-1m45s, pour \nuntil 500g");
+        BuzzerUtil::Play(2);
+      }
+      else if (g_TimerDurationS >= 105 && g_TimerDurationS < 210 && g_AutoStage == 4)
+      {
+        g_AutoStage++;
+        g_UIManager.SetLabelText(12, "3m30s, aim for \ndrawdown");
+        BuzzerUtil::Play(2);
+      }
+      else if (g_TimerDurationS >= 210)
+      {
+        g_Scale.AddCurrentBrewToData();
+        g_Scale.SaveData();
+        Shutdown();
+      }
+
+      break;
+    }
+    default:
+    {
+      break;
+    }
+    }
   }
 
   Shutdown();
@@ -98,13 +204,13 @@ inline void OnDataReadyISR()
   }
 }
 
-void HandleButtonPress()
+bool HandleButtonPress()
 {
   Vector2 touchCoords = g_TFT.GetTouchCoords();
 
   if (touchCoords.x == 0 && touchCoords.y == 0)
   {
-    return;
+    return false;
   }
 
   BuzzerUtil::Play(1);
@@ -119,8 +225,10 @@ void HandleButtonPress()
     }
 
     button->OnPress();
-    break; // can only press 1 button/point at a time, no need to check the rest
+    break; // can only press one button at a time
   }
+
+  return true;
 }
 
 void HandleScaleUpdate()
@@ -137,31 +245,31 @@ void HandleScaleUpdate()
 
 void Shutdown()
 {
-  debug("Shutting down");
-  g_Scale.SaveData();
+  debug("\n\nShutting down");
+  BuzzerUtil::Play(3);
   esp_deep_sleep_start();
 }
 
 void OnButtonPress(State newState)
 {
-  debug("OnButtonPress called!");
+  debug("\n\nOnButtonPress called!");
   g_StateMachine.SetState(newState);
 }
 
 void OnStateExit(State oldState)
 {
-  debug("OnStateExit called!");
-
+  debug("\n\nOnStateExit called!");
   g_TFT.Clear();
   g_UIManager.Clear();
-  g_UIUpdateOnlyOnce = false;
+  Misc::LAST_ELEMENT_Y = 0;
+  debug("\nLast Y pos set to: " + Misc::LAST_ELEMENT_Y);
 }
 
 void OnStateEnter(State newState)
 {
   State pendingState = newState;
 
-  debug("OnStateEnter called!");
+  debug("\n\nOnStateEnter called!");
 
   if (&g_UIManager == nullptr)
   {
@@ -173,48 +281,76 @@ void OnStateEnter(State newState)
   {
   case State::MAIN_MENU:
   {
-    debug("Welcome to the main menu");
-
-    g_UIManager.AddButton("Manual mode", State::NORMAL, OnButtonPress);
-    // g_UIManager.AddButton("Auto mode", State::AUTO, OnButtonPress);
-    // g_UIManager.AddButton("Statistics", State::STATS, OnButtonPress);
-    // debug("button created successfully");
-    g_UIManager.Update();
-    g_UIUpdateOnlyOnce = true;
+    g_UIManager.AddButton("Manual mode", State::NORMAL, OnButtonPress, 0, Misc::LAST_ELEMENT_Y);
+    g_UIManager.AddButton("Auto mode", State::AUTO, OnButtonPress, 0, Misc::LAST_ELEMENT_Y);
+    g_UIManager.AddButton("Statistics", State::STATS, OnButtonPress, 0, Misc::LAST_ELEMENT_Y);
     break;
   }
   case State::NORMAL:
   {
-    g_UIManager.AddLabel("Mass: X.XX g", 0, 0, TFT_BLACK); // Can't use SetLabel as the mass would change (string comp)
-    g_UIUpdateOnlyOnce = false;
+    debug("Taring scale...");
+    g_Scale.tare();
+    g_UIManager.AddLabel("Mass: 0.0 g", 0, Misc::LAST_ELEMENT_Y, 10); // Can't use SetLabel as the mass would change (string comp)
+    g_UIManager.AddButton("Reset", State::TARE, OnButtonPress, 0, 240 - (g_TFT.GetTFT().fontHeight() + 4));
+    g_UIManager.AddButton("Back", State::MAIN_MENU, OnButtonPress, 320 - (g_TFT.GetTFT().textWidth("Back") + 4), 240 - (g_TFT.GetTFT().fontHeight() + 4), TFT_WHITE, TFT_RED);
     break;
   }
   case State::AUTO:
   {
-    debug("Mass (g): " + g_Scale.GetMass());
+    debug("Taring scale...");
+    g_Scale.tare();
+    debug("Stopping period timer");
+    g_Scale.StopPeriodicTimer();
+    debug("Stopped period timer successfully");
+    g_TimerDurationS = 0;
 
-    g_UIUpdateOnlyOnce = false;
-    // const int elapsedTimeSeconds = getTimeSinceInteraction() / 1000000;
-    // debug("Time (m:s): " + elapsedTimeSeconds / 60 + ":" + elapsedTimeSeconds % 60); // s to m and clamp seconds to [0;59]
+    g_UIManager.AddLabel("Mass: 0.0 g", 0, Misc::LAST_ELEMENT_Y, 10);                     // Can't use SetLabel as the mass would change (string comp)
+    g_UIManager.AddLabel("Time: 0m0s", 0, Misc::LAST_ELEMENT_Y, 11);                      // Can't use SetLabel as the mass would change (string comp)
+    g_UIManager.AddLabel("Rate: 0 g/s", 0, Misc::LAST_ELEMENT_Y, 13, TFT_DARKGREEN);      // Can't use SetLabel as the mass would change (string comp)
+    g_UIManager.AddLabel("Pour to begin", 0, Misc::LAST_ELEMENT_Y + 30, 12, TFT_BLUE, 2); // Can't use SetLabel as the mass would change (string comp)
+    // g_UIManager.AddButton("Reset", State::TARE, OnButtonPress, 0, 240 - (g_TFT.GetTFT().fontHeight() + 4));
+    // g_UIManager.AddButton("Back", State::MAIN_MENU, OnButtonPress, 320 - (g_TFT.GetTFT().textWidth("Back") + 4), 240 - (g_TFT.GetTFT().fontHeight() + 4), TFT_WHITE, TFT_RED);
     break;
   }
   case State::STATS:
   {
     CoffeeScale::Data scaleData = g_Scale.GetDataStruct();
-
     debug("Total volume: " + scaleData.totalVolume);
     debug("Total brews: " + scaleData.totalBrews);
     debug("Boot count: " + g_BootCount);
     debug("Calibration value: " + scaleData.calibrationValue);
 
-    g_UIManager.AddLabel("Volume: " + (String)scaleData.totalVolume, 0, (g_TFT.GetTFT().fontHeight() + 4) * 0, TFT_BLACK);
-    g_UIManager.AddLabel("Brews: " + (String)scaleData.totalBrews, 0, (g_TFT.GetTFT().fontHeight() + 4) * 1, TFT_BLACK);
-    g_UIManager.AddLabel("Boot count: " + (String)g_BootCount, 0, (g_TFT.GetTFT().fontHeight() + 4) * 2, TFT_BLACK);
-    g_UIManager.AddLabel("Calibration value: " + (String)scaleData.calibrationValue, 0, (g_TFT.GetTFT().fontHeight() + 4) * 3, TFT_BLACK);
-    g_UIUpdateOnlyOnce = true;
+    g_UIManager.AddLabel("Volume (L): " + (String)scaleData.totalVolume, 0, Misc::LAST_ELEMENT_Y, TFT_BLACK);
+    g_UIManager.AddLabel("Brews: " + (String)scaleData.totalBrews, 0, Misc::LAST_ELEMENT_Y, TFT_BLACK);
+    g_UIManager.AddLabel("Boot count: " + (String)g_BootCount, 0, Misc::LAST_ELEMENT_Y, TFT_BLACK);
+    g_UIManager.AddLabel("Calibration value: " + (String)scaleData.calibrationValue, 0, Misc::LAST_ELEMENT_Y, TFT_BLACK);
+
+    g_UIManager.AddButton("Reset", State::RESET_STATS, OnButtonPress, 0, 240 - (g_TFT.GetTFT().fontHeight() + 4));
+    g_UIManager.AddButton("Back", State::MAIN_MENU, OnButtonPress, 320 - (g_TFT.GetTFT().textWidth("Back") + 4), 240 - (g_TFT.GetTFT().fontHeight() + 4), TFT_WHITE, TFT_RED);
+    break;
+  }
+  case State::RESET_STATS:
+  {
+    debug("Resetting stats");
+    g_Scale.ResetData();
+
+    g_UIManager.AddLabel("Reset stats successfully", 0, (g_TFT.GetTFT().fontHeight() + 4) * 0, TFT_BLACK);
+    g_UIManager.AddButton("Back", State::STATS, OnButtonPress, 320 - (g_TFT.GetTFT().textWidth("Back") + 4), 240 - (g_TFT.GetTFT().fontHeight() + 4), TFT_WHITE, TFT_RED);
+    break;
+  }
+  case State::TARE:
+  {
+    State oldState = g_StateMachine.GetState();
+    // debug("Taring...");
+    // g_Scale.tare();
+    g_UIManager.AddLabel("Reset successfully", 0, (g_TFT.GetTFT().fontHeight() + 4) * 0, TFT_BLACK);
+    g_UIManager.AddButton("Back", oldState, OnButtonPress, 320 - (g_TFT.GetTFT().textWidth("Back") + 4), 240 - (g_TFT.GetTFT().fontHeight() + 4), TFT_WHITE, TFT_RED);
+    break;
+  }
+  default:
+  {
+    debug("ERROR: unhandled state!");
     break;
   }
   }
-
-  delay(100);
 }

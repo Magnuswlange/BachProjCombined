@@ -6,6 +6,7 @@
 #include "static_ui_element.hpp"
 #include "rounded_rectangle.hpp"
 #include "states.hpp"
+#include "config.hpp"
 
 class Button : public StaticUIElement
 {
@@ -16,12 +17,12 @@ public:
     bool IsClicked(const int16_t x, const int16_t y);
     void Draw() override;
     void OnPress();
+    void Reset();
 
 private:
     TFT &m_TFT;
     RoundedRectangle m_RoundedRectangleComponent;
     Label m_Label;
-    static int16_t m_LastButtonY2;
     const int8_t m_BUTTON_GAP = 4;
     State m_State;
     std::function<void(State)> m_OnPressCallback; // OnPress callback function

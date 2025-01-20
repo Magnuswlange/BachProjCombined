@@ -49,13 +49,17 @@ void CoffeeScale::Init(unsigned long stabilizingTime, bool tareOnStart)
     debug("Calibration value: " + m_Data.calibrationValue);
     setCalFactor(m_Data.calibrationValue);
 
-    esp_timer_create_args_t oneShotTimerArgs{.callback = onTimerExpireISR, // func to cb on timer end
+    esp_timer_create_args_t oneShotTimerArgs{.callback = OnOneShotExpireISR, // func to cb on timer end
                                              .arg = nullptr,
                                              .dispatch_method = ESP_TIMER_TASK,
                                              .name = "oneShotTimer"};
+    esp_timer_create_args_t periodTimerArgs{.callback = OnPeriodISR, // func to cb on timer end
+                                            .arg = nullptr,
+                                            .dispatch_method = ESP_TIMER_TASK,
+                                            .name = "periodTimer"};
     esp_timer_create(&oneShotTimerArgs, &m_OneShotTimer);
 
-    esp_timer_create(nullptr, &m_PeriodTimer);
+    esp_timer_create(&periodTimerArgs, &m_PeriodTimer);
 }
 
 const CoffeeScale::Data &CoffeeScale::GetDataStruct() const
@@ -102,18 +106,44 @@ float CoffeeScale::GetMass()
 
 void CoffeeScale::StartOneShotTimer(uint64_t timeMs)
 {
-    if (esp_timer_is_active(m_OneShotTimer))
+    if (m_OneShotTimer != nullptr)
     {
-        esp_timer_stop(m_OneShotTimer);
+        if (esp_timer_is_active(m_OneShotTimer))
+        {
+            esp_timer_stop(m_OneShotTimer);
+        }
     }
     esp_timer_start_once(m_OneShotTimer, timeMs * 1000);
 }
 
 void CoffeeScale::StartPeriodicTimer(uint64_t periodMs)
 {
-    if (esp_timer_is_active(m_PeriodTimer))
+    if (m_PeriodTimer != nullptr)
     {
-        esp_timer_stop(m_PeriodTimer);
+        if (esp_timer_is_active(m_PeriodTimer))
+        {
+            esp_timer_stop(m_PeriodTimer);
+        }
     }
     esp_timer_start_periodic(m_PeriodTimer, periodMs * 1000);
+}
+
+void CoffeeScale::StopPeriodicTimer()
+{
+    if (m_PeriodTimer != nullptr)
+    {
+        if (esp_timer_is_active(m_PeriodTimer))
+        {
+            esp_timer_stop(m_PeriodTimer);
+        }
+    }
+}
+
+bool CoffeeScale::IsPeriodTimerRunning()
+{
+    if (m_PeriodTimer != nullptr)
+    {
+        return esp_timer_is_active(m_PeriodTimer);
+    }
+    return false;
 }

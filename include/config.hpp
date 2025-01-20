@@ -23,5 +23,6 @@ namespace TFT_Properties
 namespace Misc
 {
     constexpr gpio_num_t BUZZER_PIN = GPIO_NUM_22;
-    constexpr unsigned long TIMEOUT_THRESHOLD_MS = 60 * 1000;
+    constexpr unsigned long TIMEOUT_THRESHOLD_MS = 300 * 1000;
+    inline int16_t LAST_ELEMENT_Y = 0; // inline or extern to ensure theres only one instance across multiple translation units
 };

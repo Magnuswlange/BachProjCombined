@@ -6,7 +6,8 @@
 #include "finite_state_machine.hpp"
 
 // Declare the function pointer type for shutdown callback
-extern "C" void IRAM_ATTR onTimerExpireISR(void *arg);
+extern "C" void IRAM_ATTR OnOneShotExpireISR(void *arg);
+extern "C" void IRAM_ATTR OnPeriodISR(void *arg);
 
 class CoffeeScale : public HX711_ADC
 {
@@ -16,17 +17,18 @@ public:
 
     struct Data
     {
-        uint64_t totalVolume = 0;
+        double totalVolume = 0;
         uint64_t totalBrews = 0;
         float calibrationValue = 0;
 
         void Reset()
         {
-            *this = {};
+            totalVolume = 0;
+            totalBrews = 0;
         }
     };
 
-    void Init(unsigned long stabilizingTime = 2000, bool tareOnStart = true);
+    void Init(unsigned long stabilizingTime = 2000, bool tareOnStart = false);
     const CoffeeScale::Data &GetDataStruct() const;
     void LoadData();
     void SetData(const CoffeeScale::Data &data);
@@ -37,6 +39,8 @@ public:
     float GetMass();
     void StartOneShotTimer(uint64_t timeMs);
     void StartPeriodicTimer(uint64_t periodMs);
+    void StopPeriodicTimer();
+    bool IsPeriodTimerRunning();
 
 private:
     FiniteStateMachine &m_StateManager;

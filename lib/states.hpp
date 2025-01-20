@@ -6,5 +6,7 @@ enum class State : uint8_t
     NORMAL,
     AUTO,
     STATS,
+    RESET_STATS,
+    TARE,
     IDLE
 };

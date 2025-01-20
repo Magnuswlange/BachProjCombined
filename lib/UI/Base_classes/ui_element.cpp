@@ -42,7 +42,7 @@ bool UIElement::IsOOB() const
     // Only check Y axis for now. Label can go beyond width and then auto wrap to next line
     if (/*(m_X1 < 0 || m_X2 > m_TFT.GetTFT().getViewportWidth()) || */ (m_Y1 < 0 || m_Y2 > m_TFT.GetTFT().getViewportHeight()))
     {
-        debug("Error: UIElement is OOB");
+        debug("ERROR: UIElement is OOB");
         debug("X1: " + m_X1 + ", X2: " + m_X2 + ", Y1: " + m_Y1 + ", Y2: " + m_Y2);
         return true;
     }
