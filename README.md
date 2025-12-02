@@ -49,8 +49,9 @@ Each part of the project helped me understand more about building a fully-fledge
 ### Build steps
 1) Clone the repository.
 2) Open the repository in VS Code.
-3) Flash the firmware onto an ESP32.
-4) 3D print the scale body and display housing.
-5) Install components.
+3) Install the PlatformIO extension to manage and auto-install dependencies.
+4) Flash the firmware onto an ESP32.
+5) 3D print the scale body and display housing.
+6) Install components.
 
 ## Video demonstration
